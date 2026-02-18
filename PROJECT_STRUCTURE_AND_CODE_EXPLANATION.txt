@@ -1,0 +1,258 @@
+# AI Study Application - Project Structure and Code Explanation
+
+## Overview
+This is a collaborative study platform built with React Native and Expo, featuring AI-powered tools for students and teachers. The app allows users to create study groups, share files, record sessions, and use AI to generate summaries, flashcards, and quizzes from study materials.
+
+## Project Folder Structure
+
+### Main Directories
+- **app/** - Contains the main navigation and route files using Expo Router
+- **components/** - Reusable UI components
+- **constants/** - Global constants (theme, colors, etc.)
+- **hooks/** - Custom React hooks
+- **src/** - Main source code organized by functionality
+- **scripts/** - Utility scripts
+- **assets/** - Static assets like images and fonts
+
+### Detailed Directory Breakdown
+
+#### app/
+This directory contains all the route definitions for the application:
+- **_layout.tsx** - Main layout with navigation stack configuration and authentication provider
+- **index.tsx** - Entry point that redirects users based on authentication status
+- **welcome.tsx** - Welcome screen route entry
+- **login.tsx** - Login screen route entry  
+- **register.tsx** - Registration screen route entry
+- **dashboard.tsx** - Dashboard screen route entry
+- **forgot-password.tsx** - Forgot password screen route entry
+- **(tabs)/** - Tab navigation structure
+- **group/[groupId].tsx** - Dynamic route for study groups
+
+#### components/
+Reusable UI components used throughout the application:
+- **external-link.tsx** - Component for opening external links
+- **haptic-tab.tsx** - Tab with haptic feedback
+- **hello-wave.tsx** - Animated wave component
+- **parallax-scroll-view.tsx** - Scroll view with parallax effect
+- **themed-text.tsx** - Text component with theme support
+- **themed-view.tsx** - View component with theme support
+- **ui/** - Additional UI components
+
+#### src/
+Main source code organized by functionality:
+
+##### src/context/
+- **AuthContext.js** - Authentication context managing user state, login, registration, logout, and profile loading. Handles Supabase authentication, user roles, and local storage persistence.
+
+##### src/pages/
+React components for each page in the application:
+- **Welcome.js** - Welcome screen with app features and navigation to login/register
+- **Login.js** - Login form with email/password authentication
+- **Register.js** - Registration form with email/password and role selection
+- **Dashboard.js** - Main dashboard showing user groups and actions
+- **StudyGroup.js** - Study group interface with file sharing and AI tools
+- **ForgotPassword.js** - Password reset functionality
+- **EmailConfirmation.js** - Email confirmation screen
+
+##### src/services/
+Backend and utility services:
+- **supabase.js** - Supabase client configuration with secure storage adapter for cross-platform session persistence
+- **openai.js** - AI services using Groq API for generating summaries, flashcards, quizzes, and chat tutoring
+- **fileParser.js** - File content extraction for PDF, DOCX, and text files with platform-specific handling
+- **alerts.js** - Alert dialog utilities
+- **transcription.js** - Audio transcription services
+
+##### src/components/
+Additional reusable components:
+- **HeadlessFileParser.js** - Background file parsing functionality
+
+## Key Technologies Used
+
+### Frontend Framework
+- **React Native** - Cross-platform mobile application framework
+- **Expo** - Managed workflow for React Native development
+- **Expo Router** - File-based routing system
+- **React Navigation** - Navigation and routing library
+
+### Backend Services
+- **Supabase** - Backend-as-a-Service providing authentication, database, and storage
+- **Groq API** - AI inference service for processing study materials
+- **PDF.js** - PDF parsing library for web
+- **Mammoth.js** - DOCX parsing library for web
+
+### UI Libraries
+- **@expo/vector-icons** - Icon library
+- **expo-linear-gradient** - Gradient backgrounds
+- **react-native-gesture-handler** - Touch gesture support
+- **react-native-reanimated** - Smooth animations
+
+## Core Functionality
+
+### Authentication System
+The application uses a robust authentication system built with Supabase:
+- **Components**: [AuthContext.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js), [Login.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Login.js), [Register.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Register.js)
+- **Methods**: [register()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L117-L139), [login()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L141-L155), [logout()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L157-L188), [resetPassword()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L190-L193)
+- **Features**: Role-based access (student/teacher), email confirmation, persistent sessions, local storage caching
+
+### Study Group Management
+The application allows users to create and manage study groups:
+- **Components**: [Dashboard.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Dashboard.js), [StudyGroup.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js)
+- **Functions**: Create groups, join groups with IDs, delete groups (teachers only), view group members
+- **Database Tables**: groups, group_members
+
+### File Handling and Parsing
+Support for multiple file formats with automatic content extraction:
+- **Services**: [fileParser.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/fileParser.js)
+- **Supported Formats**: PDF, DOCX, TXT, and other text files
+- **Platform Differences**: PDF/DOCX parsing only works on web (due to library constraints)
+- **Method**: [extractTextFromFile()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/fileParser.js#L3-L124)
+
+### AI-Powered Study Tools
+Integration with Groq API for AI-powered learning assistance:
+- **Services**: [openai.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js)
+- **Features**:
+  - [generateSummary()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js#L51-L60) - Creates study summaries from content
+  - [generateFlashcards()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js#L62-L116) - Generates flashcards in JSON format
+  - [generateQuiz()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js#L119-L194) - Creates multiple-choice quizzes
+  - [chatWithTutor()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js#L197-L207) - Interactive AI tutoring chat
+
+### UI Components Breakdown
+
+#### Welcome Screen ([Welcome.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Welcome.js))
+- Displays app features and branding
+- Shows four main features: Organize Groups, AI Study Tools, Live Session Recording, Secure Platform
+- Provides navigation to login and registration
+
+#### Login Screen ([Login.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Login.js))
+- Email and password input fields
+- Password visibility toggle
+- Error handling and validation
+- Navigation to registration and password reset
+
+#### Dashboard Screen ([Dashboard.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/Dashboard.js))
+- Shows user statistics and groups
+- Create/Join group functionality
+- Group cards with member counts
+- Role-based actions (teachers can create groups)
+
+#### Study Group Screen ([StudyGroup.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js))
+- File upload and management
+- AI tools integration
+- Chat functionality
+- Session recording features
+
+### Security Features
+- Secure token storage using expo-secure-store (mobile) and localStorage (web)
+- Role-based access control
+- Password confirmation for sensitive actions (deleting groups)
+- Input validation and sanitization
+
+### Hooks and Utilities
+- **useColorScheme** - Theme management (light/dark mode)
+- **useAuth** - Access to authentication context
+- **alerts.js** - Cross-platform alert dialogs
+- **transcription.js** - Audio processing utilities
+
+## Database Schema (Supabase)
+The application uses Supabase for backend services:
+- **users** - Supabase default user table
+- **profiles** - Extended user profiles with roles
+- **groups** - Study group information
+- **group_members** - Group membership relationships
+- **files** - File storage metadata
+- **sessions** - Session recording information
+- **messages** - Chat message history
+- **session_attendance** - Attendance tracking for live sessions
+
+## Session Generation and Recording System
+The application has a comprehensive session management system that allows for live meetings and recordings:
+
+### Session Creation
+- **Components**: [StudyGroup.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js)
+- **Functions**: [createSession()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js#L1193-L1267), [handleJoinSession()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js#L1642-L1673)
+- **Features**: Teachers can create scheduled study sessions with title, description, and start time
+- **Email Notifications**: When a session is created, the system invokes a Supabase function `notify-group-session` to send email notifications to all group members
+- **Jitsi Integration**: Uses Jitsi Meet for live video conferencing through generated meeting URLs
+
+### Session Recording
+- **Services**: [transcription.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/transcription.js), [openai.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/openai.js)
+- **Functions**: [startRecording()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js#L1269-L1298), [stopRecording()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/StudyGroup.js#L1301-L1434), [transcribeRecording()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/services/transcription.js#L3-L63)
+- **Process**: 
+  1. Audio recording using expo-av library
+  2. Upload to Supabase storage bucket 'session-recordings'
+  3. Automatic transcription using transcription service
+  4. AI summary generation from transcribed text
+  5. Storage of transcript and summary in sessions table
+- **Storage**: Recordings are stored in Supabase storage with signed URLs for secure access
+
+### Live Session Features
+- **Attendance Tracking**: Students must enter their name and roll number to join a session, which is recorded in the session_attendance table
+- **Attendance View**: Teachers can view real-time attendance lists for their sessions
+- **Meeting Link Sharing**: Ability to copy and share Jitsi meeting links
+- **Session Management**: Teachers can delete sessions with password confirmation
+
+## Email Functionality
+The application implements a comprehensive email system for user communication:
+
+### Authentication Emails
+- **Components**: [AuthContext.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js), [EmailConfirmation.js](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/pages/EmailConfirmation.js)
+- **Functions**: [resendConfirmationEmail()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L195-L201), [resetPassword()](file:///d:/AARYAN%20SGU%20PROJECT/AIstudy/AIstudy/src/context/AuthContext.js#L190-L193)
+- **Features**: 
+  - Automatic email confirmation on registration
+  - Password reset functionality
+  - Ability to resend confirmation emails
+  - Email validation and error handling
+
+### Session Notifications
+- **Process**: When a teacher creates a scheduled session, the system automatically sends email notifications to all group members
+- **Implementation**: Uses Supabase Functions to trigger email notifications
+- **Data**: Includes session details like title, start time, and formatted time in the email
+
+### Email Confirmation Flow
+- Users receive a confirmation email after registration
+- Email contains a verification link to activate the account
+- Users can request to resend the confirmation email if needed
+- The EmailConfirmation screen provides instructions and a form to resend emails
+
+## File Management System
+- **Upload**: Teachers can upload files to group storage using Supabase storage
+- **Supported Types**: Images, PDFs, DOCX, and text files
+- **Storage**: Files are stored in 'group-files' Supabase storage bucket
+- **Access Control**: Only teachers can upload/delete files
+- **Preview**: Image previews and download links for all file types
+
+## AI-Powered Learning Tools
+- **Content Extraction**: Files can be parsed and content extracted for AI processing
+- **Study Tools**: Generate summaries, flashcards, and quizzes from study materials
+- **AI Tutor**: Interactive chat interface with AI-powered tutoring
+- **Integration**: Uses Groq API for fast AI inference
+
+## Real-time Features
+- **Real-time Chat**: Messages are synchronized across all users using Supabase real-time subscriptions
+- **File Updates**: File lists update in real-time when new files are uploaded
+- **Session Notifications**: Session changes are reflected immediately across all clients
+- **Attendance Tracking**: Real-time attendance updates for live sessions
+
+## Environment Configuration
+The application requires environment variables:
+- **EXPO_PUBLIC_SUPABASE_URL** - Supabase project URL
+- **EXPO_PUBLIC_SUPABASE_ANON_KEY** - Supabase anonymous key
+- **EXPO_PUBLIC_GROQ_API_KEY** - Groq API key for AI services
+- **EXPO_PUBLIC_TRANSCRIBE_URL** - Transcription service URL (optional)
+
+## Mobile vs Web Differences
+- PDF/DOCX parsing only available on web (due to library constraints)
+- Different storage mechanisms (SecureStore vs localStorage)
+- Platform-specific UI adaptations
+- Different session management approaches
+- Audio recording capabilities available on both platforms
+- File handling differs between mobile and web platforms
+
+## Architecture Patterns
+- Context API for state management
+- Service-oriented architecture for backend interactions
+- Component-based UI architecture
+- File-based routing with Expo Router
+- Separation of concerns between UI, services, and business logic
+- Real-time data synchronization using Supabase subscriptions
+- Modular service architecture for AI, transcription, and file handling

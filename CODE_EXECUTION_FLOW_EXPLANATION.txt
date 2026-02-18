@@ -1,0 +1,1414 @@
+# AI Study Application - Code Execution Flow (Line-by-Line)
+
+## App Startup Flow
+
+### 1. App.js Execution
+When the app starts, the main `App.js` file runs first:
+
+```javascript
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useFonts } from 'expo-font';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect } from 'react';
+import 'react-native-reanimated';
+import { AuthProvider } from './src/context/AuthContext';
+
+// Prevent the splash screen from auto-hiding.
+SplashScreen.preventAutoHideAsync();
+
+export default function App() {
+  // Load custom fonts
+  const [loaded] = useFonts({
+    SpaceMono: require('./assets/fonts/SpaceMono-Regular.ttf'),
+  });
+
+  // Hide splash screen when fonts are loaded and app is ready
+  useEffect(() => {
+    if (loaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [loaded]);
+
+  // Only render the app if fonts are loaded
+  if (!loaded) {
+    return null;
+  }
+
+  // Return the main app structure with authentication provider
+  return (
+    <AuthProvider>
+      <ThemeProvider value={DefaultTheme}>
+        <Stack>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="welcome" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="forgot-password" />
+          <Stack.Screen name="register" />
+          <Stack.Screen name="dashboard" />
+          <Stack.Screen name="group/[groupId]" />
+          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        </Stack>
+      </ThemeProvider>
+    </AuthProvider>
+  );
+}
+```
+
+**Execution Flow:**
+1. Import all necessary modules and components
+2. Prevent splash screen from auto-hiding to ensure smooth loading
+3. Load custom fonts using `useFonts` hook
+4. When fonts are loaded, hide the splash screen
+5. If fonts aren't loaded yet, return null (show splash screen)
+6. Once fonts are loaded, render the app with:
+   - AuthProvider to manage authentication state
+   - ThemeProvider for UI theming
+   - Stack navigator with all available screens
+
+### 2. Authentication Context Initialization
+When `<AuthProvider>` renders, the `AuthContext.js` initializes:
+
+```javascript
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../services/supabase';
+
+export const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  // Initialize state
+  const [currentUser, setCurrentUser] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Helper functions for local storage
+  const saveRoleToStorage = useCallback((role) => {
+    try {
+      localStorage.setItem('userRole', role);
+    } catch (e) {
+      console.warn('[AuthContext] Failed to save role to localStorage:', e);
+    }
+  }, []);
+
+  const getRoleFromStorage = useCallback(() => {
+    try {
+      return localStorage.getItem('userRole');
+    } catch (e) {
+      console.warn('[AuthContext] Failed to get role from localStorage:', e);
+      return null;
+    }
+  }, []);
+
+  // Load user profile function
+  const loadProfile = useCallback(async (user) => {
+    if (!user) {
+      setUserData(null);
+      return;
+    }
+
+    // Get cached role as fallback
+    const cachedRole = getRoleFromStorage();
+    
+    // Set optimistic data from metadata for instant UI responsiveness
+    const initialData = {
+      id: user.id,
+      email: user.email,
+      name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
+      role: user.user_metadata?.role || cachedRole || 'student',
+    };
+    setUserData(initialData);
+
+    // Save the initial role to localStorage if different from cached
+    if (initialData.role !== cachedRole) {
+      saveRoleToStorage(initialData.role);
+    }
+
+    // Fetch full profile from DB in background
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!error && data) {
+        // Profile exists, update state with DB data
+        const finalRole = data.role || cachedRole || 'student';
+        setUserData({
+          id: data.id,
+          email: data.email,
+          name: data.name,
+          role: finalRole,
+        });
+        
+        // Update localStorage with the latest role from database
+        if (data.role && data.role !== cachedRole) {
+          saveRoleToStorage(data.role);
+        }
+      } else if (!error && !data) {
+        // Profile doesn't exist, create it from user metadata
+        const profileData = {
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
+          role: user.user_metadata?.role || cachedRole || 'student',
+        };
+
+        const { data: newProfile, error: insertError } = await supabase
+          .from('profiles')
+          .insert(profileData)
+          .select()
+          .single();
+
+        if (!insertError && newProfile) {
+          setUserData(profileData);
+          saveRoleToStorage(profileData.role);
+        } else if (insertError) {
+          console.warn('[AuthContext] Failed to create profile:', insertError);
+          
+          // Check if it's a permission or table doesn't exist error
+          if (insertError.message?.includes('relation "profiles" does not exist')) {
+            console.error('[AuthContext] Profiles table does not exist. Please run the setup-database.sql script in Supabase dashboard.');
+          } else if (insertError.message?.includes('permission denied')) {
+            console.error('[AuthContext] Permission denied. Check RLS policies on profiles table.');
+          }
+          
+          // Keep using optimistic data if insert fails
+          console.log('[AuthContext] Using optimistic data as fallback');
+        }
+      } else if (error) {
+        console.warn('[AuthContext] Error fetching profile:', error);
+      }
+    } catch (e) {
+      console.warn('[AuthContext] Profile background fetch failed:', e);
+      // If DB fetch fails, at least we have the cached role
+      if (cachedRole) {
+        setUserData(prev => prev ? { ...prev, role: cachedRole } : null);
+      }
+    }
+  }, [getRoleFromStorage, saveRoleToStorage]);
+
+  // Register function
+  const register = useCallback(async (email, password, name, role = 'student') => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: name,
+          role,
+        },
+      },
+    });
+
+    if (error) throw error;
+    
+    // Load profile in background to ensure role is set and profile is created
+    if (data?.user) {
+      loadProfile(data.user).catch(err => {
+        console.warn('[AuthContext] Background profile load failed:', err);
+      });
+    }
+    
+    return data;
+  }, [loadProfile]);
+
+  // Login function
+  const login = useCallback(async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) throw error;
+    if (data?.user) {
+      // Load profile in background to avoid blocking UI
+      loadProfile(data.user).catch(err => {
+        console.warn('[AuthContext] Background profile load failed:', err);
+      });
+    }
+    return data;
+  }, [loadProfile]);
+
+  // Logout function
+  const logout = useCallback(async () => {
+    try {
+      // 1. Clear local state immediately for fast UI response
+      setCurrentUser(null);
+      setUserData(null);
+
+      // 2. Clear cached role from localStorage
+      try {
+        localStorage.removeItem('userRole');
+      } catch (e) {
+        console.warn('[AuthContext] Failed to clear role from localStorage:', e);
+      }
+
+      // 3. Clear all Supabase channels (non-blocking)
+      try {
+        const channels = supabase.getChannels();
+        if (Array.isArray(channels)) {
+          channels.forEach(ch => supabase.removeChannel(ch));
+        }
+      } catch (e) {
+        console.warn('Channel cleanup error:', e);
+      }
+
+      // 4. Perform server-side sign out
+      await supabase.auth.signOut();
+
+      console.log('Logout successful');
+    } catch (error) {
+      console.error('Logout failed:', error);
+      // State is already cleared above
+    }
+  }, []);
+
+  // Reset password function
+  const resetPassword = useCallback(async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) throw error;
+  }, []);
+
+  // Resend confirmation email function
+  const resendConfirmationEmail = useCallback(async (email) => {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email,
+    });
+    if (error) throw error;
+  }, []);
+
+  // Initialize auth on component mount
+  useEffect(() => {
+    let mounted = true;
+
+    const init = async () => {
+      try {
+        console.log('[AuthContext] Initializing auth...');
+        
+        // Try to get existing session
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        console.log('[AuthContext] Session check result:', { 
+          hasSession: !!session, 
+          hasUser: !!session?.user,
+          error: sessionError 
+        });
+
+        if (mounted) {
+          if (session?.user) {
+            console.log('[AuthContext] Found existing session, setting user and loading profile');
+            setCurrentUser(session.user);
+            // Load profile in background to avoid blocking UI
+            loadProfile(session.user).catch(err => {
+              console.warn('[AuthContext] Background profile load failed:', err);
+            });
+          } else {
+            console.log('[AuthContext] No existing session found');
+            setCurrentUser(null);
+            setUserData(null);
+          }
+        }
+      } catch (err) {
+        console.error('[AuthContext] Init error:', err);
+        if (mounted) {
+          setCurrentUser(null);
+          setUserData(null);
+        }
+      } finally {
+        if (mounted) {
+          console.log('[AuthContext] Initialization complete, setting loading to false');
+          setLoading(false);
+        }
+      }
+    };
+
+    init();
+
+    // Set up auth state change listener
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[AuthContext] Auth state changed:', { event, hasSession: !!session, hasUser: !!session?.user });
+      
+      if (mounted) {
+        if (event === 'SIGNED_OUT') {
+          console.log('[AuthContext] User signed out, clearing state');
+          setCurrentUser(null);
+          setUserData(null);
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          if (session?.user) {
+            console.log('[AuthContext] User signed in or token refreshed, setting user and loading profile');
+            setCurrentUser(session.user);
+            // Load profile in background to avoid blocking UI
+            loadProfile(session.user).catch(err => {
+              console.warn('[AuthContext] Background profile load failed:', err);
+            });
+          }
+        } else if (session?.user) {
+          console.log('[AuthContext] Other auth event with session, setting user and loading profile');
+          setCurrentUser(session.user);
+          // Load profile in background to avoid blocking UI
+          loadProfile(session.user).catch(err => {
+            console.warn('[AuthContext] Background profile load failed:', err);
+          });
+        }
+
+        setLoading(false);
+      }
+    });
+
+    // Cleanup function
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [loadProfile]);
+
+  // Create the context value
+  const value = useMemo(() => ({
+    currentUser,
+    userData,
+    loading,
+    register,
+    login,
+    logout,
+    resetPassword,
+    resendConfirmationEmail,
+  }), [currentUser, userData, loading, register, login, logout, resetPassword, resendConfirmationEmail]);
+
+  // Provide the auth context to children
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+// Custom hook to use auth context
+export const useAuth = () => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+  return ctx;
+};
+```
+
+**Execution Flow:**
+1. Initialize state variables (currentUser, userData, loading)
+2. Define helper functions for localStorage operations
+3. Create loadProfile function to fetch user data from Supabase
+4. Define authentication functions (register, login, logout, etc.)
+5. On component mount, initialize auth by:
+   - Checking for existing session
+   - Setting up auth state change listener
+   - Loading user profile if session exists
+6. Provide auth context to child components
+
+### 3. Index Route Execution
+After the splash screen hides and auth context is ready, the app navigates to the index route:
+
+**app/index.tsx:**
+```javascript
+import { useAuth } from '@/src/context/AuthContext';
+import { Redirect } from 'expo-router';
+import { ActivityIndicator, View } from 'react-native';
+
+export default function Index() {
+  const { userData, loading } = useAuth();
+
+  // Show loading indicator while checking auth state
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0b1220', alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color="#0ea5e9" size="large" />
+      </View>
+    );
+  }
+
+  // If user is authenticated, redirect to dashboard
+  if (userData) {
+    return <Redirect href="/dashboard" />;
+  }
+
+  // If not authenticated, redirect to welcome screen
+  return <Redirect href="/welcome" />;
+}
+```
+
+**Execution Flow:**
+1. Get auth state from useAuth hook
+2. If still loading, show loading indicator
+3. If user data exists (authenticated), redirect to dashboard
+4. If no user data (not authenticated), redirect to welcome screen
+
+### 4. Welcome Screen Execution
+If user is not authenticated, they see the welcome screen:
+
+**app/welcome.tsx:**
+```javascript
+import Welcome from '@/src/pages/Welcome.js';
+
+export default function WelcomeRoute() {
+  return <Welcome />;
+}
+```
+
+**src/pages/Welcome.js:**
+```javascript
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import React from 'react';
+import {
+  Dimensions,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+
+const { width } = Dimensions.get('window');
+
+const Welcome = () => {
+  const router = useRouter();
+
+  return (
+    <SafeAreaView style={{ flex: 1 }}>
+      <StatusBar barStyle="light-content" />
+
+      <LinearGradient
+        colors={['#071A52', '#0b1226', '#000000']}
+        style={styles.container}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Logo & Title */}
+          <View style={styles.header}>
+            <View style={styles.iconBox}>
+              <Ionicons name="book" size={40} color="#fff" />
+            </View>
+
+            <Text style={styles.title}>StudyTogether</Text>
+            <Text style={styles.subtitle}>
+              Collaborative study rooms, AI-powered tools, and live sessions — all in one place.
+            </Text>
+          </View>
+
+          {/* Features */}
+          <View style={styles.features}>
+            <Feature
+              icon="people"
+              title="Organize Groups"
+              desc="Create groups, share files, and run sessions."
+            />
+            <Feature
+              icon="sparkles"
+              title="AI Study Tools"
+              desc="Summaries, flashcards & quizzes from notes."
+            />
+            <Feature
+              icon="mic"
+              title="Live Session Recording"
+              desc="Record, transcribe & auto-summarize sessions."
+            />
+            <Feature
+              icon="lock-closed"
+              title="Secure Platform"
+              desc="Built on Supabase with secure auth."
+            />
+          </View>
+
+          {/* Buttons */}
+          <View style={styles.buttons}>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => router.push('/login')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryButtonText}>Get Started</Text>
+              <Ionicons name="arrow-forward" size={18} color="#fff" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => router.push('/register')}
+            >
+              <Text style={styles.secondaryButtonText}>Create Account</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Footer */}
+          <Text style={styles.footerText}>
+            Free for classrooms and study groups — powered by Supabase & Groq
+          </Text>
+        </ScrollView>
+      </LinearGradient>
+    </SafeAreaView>
+  );
+};
+
+const Feature = ({ icon, title, desc }) => (
+  <View style={styles.featureCard}>
+    <View style={styles.featureIcon}>
+      <Ionicons name={icon} size={22} color="#a5b4fc" />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.featureTitle}>{title}</Text>
+      <Text style={styles.featureDesc}>{desc}</Text>
+    </View>
+  </View>
+);
+
+// Styles definition...
+```
+
+**Execution Flow:**
+1. Import all necessary components and libraries
+2. Create Welcome functional component
+3. Get router instance for navigation
+4. Render welcome screen with:
+   - Gradient background
+   - App title and description
+   - Feature cards explaining app capabilities
+   - Login and register buttons
+5. Buttons navigate to login/register screens when pressed
+
+### 5. Login Flow Execution
+When user clicks "Get Started" on welcome screen, they go to login:
+
+**app/login.tsx:**
+```javascript
+import Login from '@/src/pages/Login.js';
+
+export default function LoginRoute() {
+  return <Login />;
+}
+```
+
+**src/pages/Login.js:**
+```javascript
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import {
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import { useAuth } from '../context/AuthContext';
+import { showAlert } from '../services/alerts';
+
+const Login = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const router = useRouter();
+  const { login } = useAuth();
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      showAlert('Error', 'Please enter email and password');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await login(email.trim(), password);
+      router.replace('/dashboard');
+    } catch (e) {
+      const errorMessage = e?.message || 'Invalid credentials';
+      
+      // Check if error is related to email confirmation
+      if (errorMessage.toLowerCase().includes('email') || 
+          errorMessage.toLowerCase().includes('confirm') ||
+          errorMessage.toLowerCase().includes('verified')) {
+        showAlert('Email Not Confirmed', 'Please check your email and confirm your account before signing in.', [
+          { text: 'OK', onPress: () => {} },
+          { text: 'Resend Email', onPress: () => router.push('/email-confirmation') }
+        ]);
+      } else {
+        showAlert('Login Failed', errorMessage);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    // JSX rendering with form fields and login button
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <StatusBar barStyle="light-content" />
+
+      <LinearGradient
+        colors={['#020617', '#020617', '#000']}
+        style={styles.container}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.badge}>
+              <View style={styles.dot} />
+              <Text style={styles.badgeText}>Welcome back to StudyGrid</Text>
+            </View>
+
+            <Text style={styles.title}>Sign in</Text>
+            <Text style={styles.subtitle}>
+              Join your study groups, sessions, and AI workspace.
+            </Text>
+          </View>
+
+          {/* Login Form */}
+          <View style={styles.card}>
+            {/* Email Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@example.com"
+                placeholderTextColor="#64748b"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                style={styles.input}
+              />
+            </View>
+
+            {/* Password Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.passwordBox}>
+                <TextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!showPassword}
+                  style={[styles.input, { paddingRight: 44 }]}
+                />
+                <TouchableOpacity
+                  style={styles.eye}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <Ionicons
+                    name={showPassword ? 'eye-off' : 'eye'}
+                    size={20}
+                    color="#94a3b8"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Login Button */}
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={handleLogin}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.buttonText}>
+                {loading ? 'Signing in...' : 'Login'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Footer Links */}
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Don't have an account? </Text>
+              <TouchableOpacity onPress={() => router.push('/register')}>
+                <Text style={styles.footerLink}>Create one</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.confirmationFooter}>
+              <TouchableOpacity onPress={() => router.push('/email-confirmation')}>
+                <Text style={styles.confirmationLink}>Need to confirm your email?</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </LinearGradient>
+    </KeyboardAvoidingView>
+  );
+};
+
+// Styles definition...
+```
+
+**Execution Flow:**
+1. Initialize state for email, password, loading, and password visibility
+2. Get router and auth context
+3. Define handleLogin function that:
+   - Validates input fields
+   - Calls auth login function
+   - Redirects to dashboard on success
+   - Shows error messages on failure
+4. Render login form with email and password fields
+5. Handle password visibility toggle
+6. Provide navigation links to register and email confirmation
+
+### 6. Dashboard Execution Flow
+After successful login, user is redirected to dashboard:
+
+**app/dashboard.tsx:**
+```javascript
+import Dashboard from '@/src/pages/Dashboard.js';
+
+export default function DashboardRoute() {
+  return <Dashboard />;
+}
+```
+
+**src/pages/Dashboard.js:**
+```javascript
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import { useAuth } from '../context/AuthContext';
+import { showAlert } from '../services/alerts';
+import { supabase } from '../services/supabase';
+
+const Dashboard = () => {
+  const router = useRouter();
+  const { userData, loading: authLoading, logout } = useAuth();
+
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupDescription, setGroupDescription] = useState('');
+  const [joinGroupId, setJoinGroupId] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [groupToDelete, setGroupToDelete] = useState(null);
+  const [error, setError] = useState('');
+
+  const todayLabel = useMemo(() => new Date().toLocaleDateString(), []);
+
+  // Fetch user groups when component mounts or user data changes
+  useEffect(() => {
+    // Only redirect if we ARE NOT loading AND we HAVE NO user data
+    if (!authLoading) {
+      if (userData) {
+        fetchGroups();
+      } else {
+        // Double check currentUser to prevent "flicker" logout
+        router.replace('/welcome');
+      }
+    }
+  }, [userData, authLoading]);
+
+  /* Fetch Groups Function */
+  const fetchGroups = async () => {
+    setLoading(true);
+    try {
+      const { data: memberships, error } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', userData.id);
+
+      if (error) throw error;
+
+      if (!memberships?.length) {
+        setGroups([]);
+        return;
+      }
+
+      const groupIds = memberships.map((m) => m.group_id);
+
+      const { data, error: groupsError } = await supabase
+        .from('groups')
+        .select('*, group_members(user_id)')
+        .in('id', groupIds)
+        .order('created_at', { ascending: false });
+
+      if (groupsError) throw groupsError;
+
+      setGroups(
+        data.map((g) => ({
+          ...g,
+          membersCount: g.group_members?.length || 0,
+        })),
+      );
+    } catch (e) {
+      setError(e.message || 'Failed to load groups');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* Logout Function */
+  const handleLogout = async () => {
+    const performLogout = async () => {
+      try {
+        await logout();
+        router.replace('/welcome');
+      } catch (e) {
+        router.replace('/welcome');
+      }
+    };
+
+    showAlert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: performLogout },
+    ]);
+  };
+
+  /* Create Group Function */
+  const createGroup = async () => {
+    if (!groupName.trim()) {
+      setError('Group name is required');
+      return;
+    }
+
+    try {
+      const { data: group, error } = await supabase
+        .from('groups')
+        .insert({
+          name: groupName.trim(),
+          description: groupDescription.trim(),
+          created_by: userData.id,
+          created_by_name: userData.name,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      await supabase.from('group_members').insert({
+        group_id: group.id,
+        user_id: userData.id,
+      });
+
+      setShowCreateModal(false);
+      setGroupName('');
+      setGroupDescription('');
+      fetchGroups();
+      router.push(`/group/${group.id}`);
+    } catch (e) {
+      setError(e.message || 'Failed to create group');
+    }
+  };
+
+  /* Join Group Function */
+  const joinGroup = async () => {
+    if (!joinGroupId.trim()) {
+      setError('Group ID is required');
+      return;
+    }
+
+    try {
+      const { data: group } = await supabase
+        .from('groups')
+        .select('*')
+        .eq('id', joinGroupId.trim())
+        .single();
+
+      if (!group) {
+        setError('Group not found');
+        return;
+      }
+
+      const { data: existing } = await supabase
+        .from('group_members')
+        .select('*')
+        .eq('group_id', joinGroupId.trim())
+        .eq('user_id', userData.id)
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from('group_members').insert({
+          group_id: joinGroupId.trim(),
+          user_id: userData.id,
+        });
+      }
+
+      setShowJoinModal(false);
+      setJoinGroupId('');
+      fetchGroups();
+      router.push(`/group/${joinGroupId.trim()}`);
+    } catch (e) {
+      setError(e.message || 'Failed to join group');
+    }
+  };
+
+  /* Password Verification Function */
+  const verifyPassword = async (password) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: userData.email,
+        password,
+      });
+      
+      if (error) {
+        return false;
+      }
+      
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  /* Delete Group Function */
+  const handleDeleteGroup = (group) => {
+    if (group.created_by !== userData.id) {
+      showAlert('Not allowed', 'Only the creator can delete this group.');
+      return;
+    }
+
+    // If user is a teacher, require password confirmation
+    if (userData.role === 'teacher') {
+      setGroupToDelete(group);
+      setShowPasswordModal(true);
+      return;
+    }
+
+    // For non-teachers, proceed with normal deletion flow
+    confirmDeleteGroup(group);
+  };
+
+  const confirmDeleteGroup = async (group) => {
+    try {
+      setLoading(true);
+
+      // 1. Fetch file paths and session recordings to clean up storage
+      const { data: groupFiles } = await supabase.from('files').select('path').eq('group_id', group.id);
+      const { data: groupSessions } = await supabase.from('sessions').select('recording_path').eq('group_id', group.id);
+
+      // 2. Delete messages
+      await supabase.from('messages').delete().eq('group_id', group.id);
+
+      // 3. Delete files from Storage & DB
+      if (groupFiles && groupFiles.length > 0) {
+        const paths = groupFiles.filter(f => f.path).map(f => f.path);
+        if (paths.length > 0) {
+          await supabase.storage.from('group-files').remove(paths);
+        }
+      }
+      await supabase.from('files').delete().eq('group_id', group.id);
+
+      // 4. Delete sessions from Storage & DB
+      if (groupSessions && groupSessions.length > 0) {
+        const recPaths = groupSessions.filter(s => s.recording_path).map(s => s.recording_path);
+        if (recPaths.length > 0) {
+          await supabase.storage.from('session-recordings').remove(recPaths);
+        }
+      }
+      await supabase.from('sessions').delete().eq('group_id', group.id);
+
+      // 5. Delete members and the group
+      await supabase.from('group_members').delete().eq('group_id', group.id);
+      const { error: groupErr } = await supabase.from('groups').delete().eq('id', group.id);
+      if (groupErr) throw groupErr;
+
+      await fetchGroups();
+      showAlert('Success', 'Group and all its content deleted from Supabase.');
+    } catch (e) {
+      console.error('Delete failed:', e);
+      showAlert('Delete Failed', e.message || 'Could not delete group.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Render the dashboard UI with groups list, create/join buttons, etc.
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header with user info and logout button */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Dashboard</Text>
+          <Text style={styles.subtitle}>Welcome back, {userData.name}</Text>
+        </View>
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.logoutText}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Stats showing user groups and role */}
+      <View style={styles.statsRow}>
+        <Stat label="Your Groups" value={groups.length} />
+        <Stat label="Role" value={userData.role} small />
+        <Stat label="Today" value={todayLabel} small />
+      </View>
+
+      {/* Create/Join Group Buttons */}
+      <View style={styles.actionsRow}>
+        {userData.role === 'teacher' && (
+          <ActionBtn text="Create Group" color="#0ea5e9" onPress={() => setShowCreateModal(true)} />
+        )}
+        <ActionBtn text="Join Group" color="#10b981" onPress={() => setShowJoinModal(true)} />
+      </View>
+
+      {error && <ErrorBox text={error} />}
+
+      {/* Groups List */}
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator /></View>
+      ) : (
+        <FlatList
+          data={groups}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 16 }}
+          ListEmptyComponent={<Text style={styles.empty}>No groups yet.</Text>}
+          renderItem={({ item }) => (
+            <GroupCard
+              group={item}
+              isOwner={item.created_by === userData.id}
+              onOpen={() => router.push(`/group/${item.id}`)}
+              onDelete={() => handleDeleteGroup(item)}
+            />
+          )}
+        />
+      )}
+
+      {/* Modals for creating/joining groups and password confirmation */}
+      {/* ... modal components ... */}
+    </SafeAreaView>
+  );
+};
+
+// Additional components and styles...
+```
+
+**Execution Flow:**
+1. Initialize state for groups, modals, form fields, and error handling
+2. On component mount, fetch user's groups from Supabase
+3. Render dashboard UI with:
+   - User information header
+   - Stats cards showing group count, role, and date
+   - Create/Join group buttons (role-based)
+   - List of user's groups
+4. Handle group creation, joining, and deletion
+5. Show appropriate modals for different actions
+6. Implement security measures like password confirmation for teachers
+
+### 7. Study Group Execution Flow
+When user selects a group, they navigate to the study group page:
+
+**app/group/[groupId].tsx:**
+```javascript
+import StudyGroup from '@/src/pages/StudyGroup.js';
+
+export default function StudyGroupRoute() {
+  return <StudyGroup />;
+}
+```
+
+**src/pages/StudyGroup.js:**
+```javascript
+// This is a large component that handles the study group interface
+// It includes chat, file sharing, session management, and AI tools
+
+// The component initializes multiple states for:
+// - Group information
+// - Messages
+// - Files
+// - Sessions
+// - AI tools
+// - Recording functionality
+// - Real-time subscriptions
+
+// Key functions include:
+// - fetchGroup() - Get group details
+// - subscribeMessages() - Set up real-time message updates
+// - subscribeFiles() - Set up real-time file updates
+// - subscribeSessions() - Set up real-time session updates
+// - sendMessage() - Send messages to the group
+// - uploadFile() - Upload files to group storage
+// - createSession() - Create study sessions
+// - startRecording() - Start audio recording
+// - stopRecording() - Stop and process recording
+// - generateSummaryFromRecording() - Generate AI summary from recording
+// - and many more...
+
+// The component uses multiple tabs for different functionality:
+// - Chat tab for messaging
+// - Files tab for file management
+// - Sessions tab for session management
+// - AI Tutor tab for AI-powered learning
+```
+
+**Execution Flow:**
+1. Initialize all necessary state variables for the group functionality
+2. On component mount:
+   - Fetch group information
+   - Subscribe to real-time updates for messages, files, and sessions
+   - Set up cleanup functions for real-time channels
+3. Render tabbed interface with:
+   - Chat functionality with message sending and file sharing
+   - File management with upload/download capabilities
+   - Session management with recording and scheduling
+   - AI tools for summaries, flashcards, and quizzes
+4. Handle real-time updates through Supabase subscriptions
+5. Manage audio recording and transcription process
+6. Provide AI-powered study tools integration
+
+### 8. Supabase Service Initialization
+Throughout the app, the Supabase service is used for all backend operations:
+
+**src/services/supabase.js:**
+```javascript
+import { createClient } from '@supabase/supabase-js';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import 'react-native-url-polyfill/auto';
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  // Log error if environment variables are missing
+  console.error(
+    '[Supabase] Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY. Add them to your .env file.',
+  );
+}
+
+const ExpoSecureStoreAdapter = {
+  getItem: async (key) => {
+    // Handle storage differently based on platform
+    if (Platform.OS === 'web' || typeof window === 'undefined') {
+      // Web implementation using localStorage with fallbacks
+      try {
+        const value = globalThis?.localStorage?.getItem(key);
+        if (value) return value;
+        
+        // Fallback to sessionStorage
+        try {
+          const sessionValue = globalThis?.sessionStorage?.getItem(key);
+          if (sessionValue) return sessionValue;
+        } catch (sessionErr) {
+          console.warn('[Supabase] SessionStorage access failed:', sessionErr);
+        }
+        
+        // Final fallback to memory
+        return ExpoSecureStoreAdapter.__memory.get(key) ?? null;
+      } catch (err) {
+        console.warn('[Supabase] LocalStorage access failed, using memory fallback:', err);
+        return ExpoSecureStoreAdapter.__memory.get(key) ?? null;
+      }
+    }
+
+    // Native implementation using SecureStore
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch (err) {
+      console.warn('[Supabase] SecureStore access failed:', err);
+      return null;
+    }
+  },
+  
+  setItem: async (key, value) => {
+    if (Platform.OS === 'web' || typeof window === 'undefined') {
+      // Web implementation
+      try {
+        globalThis?.localStorage?.setItem(key, value);
+        globalThis?.sessionStorage?.setItem(key, value);
+        ExpoSecureStoreAdapter.__memory.set(key, value);
+      } catch (err) {
+        // Fallback storage mechanisms
+        try {
+          globalThis?.sessionStorage?.setItem(key, value);
+          ExpoSecureStoreAdapter.__memory.set(key, value);
+        } catch (sessionErr) {
+          ExpoSecureStoreAdapter.__memory.set(key, value);
+        }
+      }
+      return;
+    }
+
+    // Native implementation
+    try {
+      await SecureStore.setItemAsync(key, value);
+    } catch (err) {
+      console.warn('[Supabase] SecureStore setItem failed:', err);
+    }
+  },
+  
+  removeItem: async (key) => {
+    if (Platform.OS === 'web' || typeof window === 'undefined') {
+      // Web implementation
+      try {
+        globalThis?.localStorage?.removeItem(key);
+      } catch (err) {
+        console.warn('[Supabase] LocalStorage removeItem failed:', err);
+      }
+      
+      try {
+        globalThis?.sessionStorage?.removeItem(key);
+      } catch (sessionErr) {
+        console.warn('[Supabase] SessionStorage removeItem failed:', sessionErr);
+      }
+      
+      ExpoSecureStoreAdapter.__memory.delete(key);
+      return;
+    }
+
+    // Native implementation
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch (err) {
+      console.warn('[Supabase] SecureStore removeItem failed:', err);
+    }
+  },
+  __memory: new Map(),
+};
+
+// Create Supabase client with custom storage adapter
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storage: ExpoSecureStoreAdapter,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+});
+
+export default supabase;
+```
+
+**Execution Flow:**
+1. Import Supabase client and secure storage libraries
+2. Get Supabase URL and API key from environment variables
+3. Create a custom storage adapter that works across web and native platforms
+4. Initialize Supabase client with the custom storage adapter
+5. Configure authentication settings for session persistence
+
+### 9. AI Services Execution
+The application uses AI services for study tools:
+
+**src/services/openai.js:**
+```javascript
+const MODEL = 'llama-3.3-70b-versatile';
+
+let lastCall = 0;
+const COOLDOWN = 1000;
+
+const waitCooldown = async () => {
+  const now = Date.now();
+  const diff = now - lastCall;
+  if (diff < COOLDOWN) {
+    await new Promise((r) => setTimeout(r, COOLDOWN - diff));
+  }
+  lastCall = Date.now();
+};
+
+const generate = async (messages, jsonMode = false) => {
+  await waitCooldown();
+
+  const apiKey = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing EXPO_PUBLIC_GROQ_API_KEY');
+  }
+
+  const body = {
+    model: MODEL,
+    messages,
+    temperature: 0.7,
+  };
+
+  if (jsonMode) {
+    body.response_format = { type: 'json_object' };
+  }
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Groq API error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+};
+
+// Functions for different AI capabilities
+export const generateSummary = async (content) => {
+  const prompt = `Summarize the following study notes in simple language with bullet points:\n\n${content.slice(0, 6000)}`;
+
+  const messages = [
+    { role: 'system', content: 'You are a helpful study assistant. Create concise summaries.' },
+    { role: 'user', content: prompt },
+  ];
+
+  return await generate(messages);
+};
+
+export const generateFlashcards = async (content) => {
+  // Similar implementation for flashcards with JSON response
+  // ...
+};
+
+export const generateQuiz = async (content) => {
+  // Similar implementation for quizzes with JSON response
+  // ...
+};
+
+export const chatWithTutor = async (messages) => {
+  // Implementation for AI tutoring chat
+  // ...
+};
+```
+
+**Execution Flow:**
+1. Define AI model and cooldown settings
+2. Create a rate-limiting function to prevent API abuse
+3. Implement core generation function that calls Groq API
+4. Export specific functions for different AI capabilities (summary, flashcards, quiz, tutoring)
+5. Handle JSON responses and error cases appropriately
+
+## Summary of Execution Flow
+
+The application follows this complete execution flow:
+
+1. **App Startup**: App.js loads with splash screen and font loading
+2. **Authentication Initialization**: AuthContext sets up Supabase authentication
+3. **Route Determination**: Index route redirects based on auth status
+4. **Unauthenticated Flow**: Welcome → Login/Register
+5. **Authenticated Flow**: Dashboard → Study Groups
+6. **Group Interaction**: Chat, files, sessions, and AI tools
+7. **Backend Integration**: Supabase for authentication, database, and storage
+8. **AI Integration**: Groq API for study tools and tutoring
+
+Each component follows React's lifecycle with proper state management, error handling, and cleanup functions. The app uses real-time subscriptions for collaborative features and implements security measures like password confirmation for sensitive actions.
